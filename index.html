@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracking Zásilky NTS</title>
+    <style>
+        :root { --brand: #e05e00; --bg: #f8f9fa; --text: #333; --border: #e2e8f0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); margin: 0; color: var(--text); }
+        
+        /* Header */
+        .header { background: var(--brand); color: white; padding: 20px; text-align: center; }
+        .header h1 { margin: 0; font-size: 1.5rem; }
+        
+        /* Main Container */
+        .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+        .tracking-header { text-align: center; margin-bottom: 30px; }
+        
+        /* Loader */
+        .loader-container { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; }
+        .spinner { width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid var(--brand); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Content Sections */
+        #mainContent { display: none; }
+        .section-title { font-size: 1.3rem; border-bottom: 2px solid var(--border); padding-bottom: 10px; margin-bottom: 20px; color: #111; }
+        
+        /* Details Grid */
+        .details-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 40px; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 5px rgba(0,0,0,0.05); }
+        .detail-item { font-size: 0.95rem; }
+        
+        /* Timeline */
+        .timeline { position: relative; margin-left: 20px; padding-bottom: 20px; }
+        .timeline::before { content: ''; position: absolute; left: 6px; top: 10px; bottom: 0; width: 2px; background: #ccc; }
+        .timeline-item { position: relative; padding-left: 35px; margin-bottom: 25px; }
+        
+        /* Timeline Dots */
+        .dot { position: absolute; left: 0; top: 5px; width: 14px; height: 14px; border-radius: 50%; background: #dc3545; z-index: 1; }
+        .dot.pulsing { animation: pulse 1.5s infinite; }
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
+            70% { transform: scale(1.3); box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+
+        /* Timeline Card */
+        .timeline-card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
+        .timeline-item.latest .timeline-card { border: 2px solid #007bff; background: #f0f7ff; }
+        .timeline-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 5px; }
+        .german-note { font-size: 0.8rem; color: #666; margin-bottom: 2px; }
+        .timeline-loc { font-size: 0.95rem; margin-top: 8px; font-weight: 500; }
+        .timeline-date { font-size: 0.85rem; color: #888; margin-top: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>NTS: Podrobný tracking zásilek</h1>
+</div>
+
+<div class="container">
+    <div class="tracking-header">
+        Vyhledat zásilku: <strong>#PO-NTS:11</strong>
+    </div>
+
+    <div id="loader" class="loader-container">
+        <div class="spinner"></div>
+        <p style="margin-top: 15px; font-weight: bold;">Získávání informací...</p>
+    </div>
+
+    <div id="mainContent">
+        <h2 class="section-title">Informace o zásilce:</h2>
+        <div class="details-grid">
+            <div class="detail-item">Velikost: <strong>-</strong></div>
+            <div class="detail-item">Hmotnost: <strong>-</strong></div>
+            <div class="detail-item">Odesílatel: <strong>Verbatim IT EU-Handel GmbH</strong></div>
+            <div class="detail-item">Sledováno kurýry v: <strong>DHL, DPD</strong></div>
+            <div class="detail-item">Cena: <strong>Čeká na vyjádření CZK</strong></div>
+            <div class="detail-item">Číslo zásilky: <strong>V systému NTS: "#PO-NTS:11"; pro kurýr: "00340434292150126953"</strong></div>
+            <div class="detail-item">PIN pro převzetí: <strong>-</strong></div>
+            <div class="detail-item">Výdejní místo: <strong>DPD Pickup DZ OIL Brodecká 39, CZ</strong></div>
+            <div class="detail-item">Informace o příjemci: <strong>Adam Starý, +420 720 116 015</strong></div>
+        </div>
+
+        <h2 class="section-title">Stav zásilky:</h2>
+        <div class="timeline" id="timelineContainer">
+            </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyA4Cy-HwOgJ5GtFSoXgCXBvIwrWiYh9zCg",
+      authDomain: "dhl-zasilka.firebaseapp.com",
+      databaseURL: "https://dhl-zasilka-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "dhl-zasilka",
+      storageBucket: "dhl-zasilka.firebasestorage.app",
+      messagingSenderId: "93815996728",
+      appId: "1:93815996728:web:9c0cb4566b9823840681cd"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // Simulace načítání 2 vteřiny
+    setTimeout(() => {
+        document.getElementById('loader').style.display = 'none';
+        document.getElementById('mainContent').style.display = 'block';
+    }, 2000);
+
+    // Načítání z Firebase
+    onValue(ref(db, 'steps'), (snapshot) => {
+        const timelineContainer = document.getElementById('timelineContainer');
+        timelineContainer.innerHTML = '';
+        const steps = [];
+
+        snapshot.forEach((childSnapshot) => {
+            steps.push({ id: childSnapshot.key, ...childSnapshot.val() });
+        });
+
+        // Nejnovější nahoře
+        steps.sort((a, b) => b.timestamp - a.timestamp);
+
+        if(steps.length === 0) {
+            timelineContainer.innerHTML = '<p>Zatím žádná historie.</p>';
+            return;
+        }
+
+        steps.forEach((step, index) => {
+            const isLatest = index === 0; // První prvek je nejnovější
+            const dateObj = new Date(step.time);
+            const formattedDate = dateObj.toLocaleString('cs-CZ', { dateStyle: 'long', timeStyle: 'short' });
+            
+            let germanHtml = '';
+            if (step.lang === 'german') {
+                germanHtml = `
+                    <div class="german-note">Originál: ${step.germanText}</div>
+                    <div class="german-note"><i>Překlady z originálu do CZ provádí Google Překladač</i></div>
+                `;
+            }
+
+            const div = document.createElement('div');
+            div.className = `timeline-item ${isLatest ? 'latest' : ''}`;
+            
+            div.innerHTML = `
+                <div class="dot ${isLatest ? 'pulsing' : ''}"></div>
+                <div class="timeline-card">
+                    <div class="timeline-title">${step.name}</div>
+                    ${germanHtml}
+                    <div class="timeline-loc">Místo vzniku události: ${step.location}</div>
+                    <div class="timeline-date">${formattedDate}</div>
+                </div>
+            `;
+            timelineContainer.appendChild(div);
+        });
+    });
+</script>
+</body>
+</html>
